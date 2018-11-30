@@ -1,0 +1,697 @@
+---
+title: "HDF_set"
+author: "Insang Song"
+date: "November 23, 2016"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, out.width='1200px', out.height='3000px', dpi=254)
+```
+
+# HDF5
+
+```{r}
+#source('http://bioconductor.org/biocLite.R')
+#biocLite('rhdf5')
+#install.packages(c('h5','gdalUtils'), repos='http://healthstat.snu.ac.kr/CRAN')
+
+suppressPackageStartupMessages(require(rhdf5))
+suppressPackageStartupMessages(require(h5))
+suppressPackageStartupMessages(require(sp))
+suppressPackageStartupMessages(require(rgdal))
+suppressPackageStartupMessages(require(gdalUtils))
+suppressPackageStartupMessages(require(raster))
+suppressPackageStartupMessages(require(dplyr))
+suppressPackageStartupMessages(require(lattice))
+suppressPackageStartupMessages(require(rgeos))
+suppressPackageStartupMessages(require(foreach))
+suppressPackageStartupMessages(require(doParallel))
+
+install.packages(c('h5','rhdf5','sp','rgdal','gdalUtils','raster','dplyr','lattice','rgeos','foreach','doParallel'))
+source("http://bioconductor.org/biocLite.R")
+biocLite("rhdf5")
+
+library(h5)
+library(foreach)
+library(rhdf5)
+library(gdalUtils)
+library(raster)
+
+aod_data <- load("__Specify_your_own_directory__/YAER_extract_20161109.RData")
+```
+
+```{r, include=FALSE, eval=FALSE}
+########################################################################################
+### dir.output: directory containing h5 files
+### list.h5s : list all *.h5 files
+########################################################################################
+
+dir.output <- "E:/GOCI_MI/GOCI_Processed/" # Directory path of processed h5 files
+dir.output <- "G:/MODIS_AOD/MOD_3K/2001_2002_MOD04_3K/" # Directory path of processed h5 files
+#dir.output <- "D:/MI_Processed/" # Directory path of processed h5 files
+#dir.output <- "C:/Users/yangq/Dropbox/AOD/MI_output/" # Directory path of processed h5 files
+
+list.h5s <- list.files(dir.output, pattern='*.h5$|H5$', full.names = TRUE)
+list.h5s <- list.h5s[c(1,34004:38126)]
+# 38126
+#27605 = 2014-08-01
+#34003=2015-05-01
+doParallel::registerDoParallel(cores = 6)
+
+system.time(mi.extract <- 
+foreach(i = 1:length(list.h5s),
+        .combine = cbind, 
+        .packages = c('rhdf5','sp','rgdal','gdalUtils','raster','rgeos','foreach')) %dopar% {
+
+  monitor.dk <- data.frame()
+  # Layer names are case-sensitive
+  
+  #hdf.01.lat <- h5read(paste(dir.output, list.h5s[i], sep=''), "Latitude")
+  #hdf.01.long <- h5read(paste(dir.output, list.h5s[i], sep=''), "Longitude")
+  
+  #hdf.01.cloud <- h5read(paste(dir.output, list.h5s[i], sep=''), "Cloud_fraction")
+  #hdf.01.landmask <- h5read(paste(dir.output, list.h5s[i], sep=''), "Land_Sea_Mask")
+  
+  hdf.01.lat <- h5read(paste(dir.output, list.h5s[1], sep=''), "Latitude")
+  hdf.01.lat[is.na(hdf.01.lat)] <- 0
+  hdf.01.lat.l <- c(t(hdf.01.lat))
+    
+  hdf.01.long <- h5read(paste(dir.output, list.h5s[1], sep=''), "Longitude")
+  hdf.01.long[is.na(hdf.01.long)] <- 0
+  hdf.01.long.l <- c(t(hdf.01.long))
+
+  hdf.01.aerosols <- h5read(paste(dir.output, list.h5s[i], sep=''), "AOD_550nm")
+  #hdf.01.aerosols.qa <- h5read(paste(dir.output, list.h5s[i], sep=''), "QA_AOD_550nm")
+  
+  # coerce matrix into a vector column-wise
+  hdf.01.aerosol.c <- c(t(hdf.01.aerosols))
+  
+  hdf.01.dl <- matrix(c(hdf.01.lat.l, hdf.01.long.l, hdf.01.aerosol.c),
+                      ncol=3, 
+                      byrow=FALSE)
+  hdf.01.dl <- hdf.01.dl[apply(as.matrix(is.nan(hdf.01.dl[,1])),1,sum) *                      apply(as.matrix(is.nan(hdf.01.dl[,2])),1,sum) == 1,]
+  
+  #hdf.01.cloud.c <- c(t(hdf.01.cloud))
+  #hdf.01.landmask.c <- c(t(hdf.01.landmask))
+
+  # Spatial extent of Korea peninsular and its adjunct territories
+  kor.ext <- matrix(c(124,131,33,38), byrow=T, nrow=2)
+  #kor.ext.p <- 
+  
+  # To Spatial*DataFrame
+  hdf.01.aod.pt <- SpatialPointsDataFrame(
+    coords = matrix(c(hdf.01.long.l, hdf.01.lat.l), byrow=FALSE, ncol=2), 
+    data = data.frame(matrix(c(hdf.01.aerosol.c), byrow=FALSE, ncol=1)),
+    proj4string = CRS('+init=epsg:4326'))
+  colnames(hdf.01.aod.pt@data) <- c('AOD')
+  
+  hdf.01.aod.pt <- crop(hdf.01.aod.pt, kor.ext)
+  
+  # Reprojection examples
+  std.crs <- '+proj=tmerc +lat_0=38 +lon_0=127.0028902777778 +k=1 +x_0=200000 +y_0=500000 +ellps=bessel +towgs84=-146.414,507.337,680.507,0,0,0,0 +units=m +no_defs'
+
+  #hdf.01.aod.pp <- spTransform(hdf.01.aod.pt, CRS('+init=epsg:32652')) #To WGS84 UTM Zone 52N
+  #hdf.01.aod.pk <- spTransform(hdf.01.aod.pt, CRS('+init=epsg:5174')) #To 1985 Korea Modified Central Belt
+  hdf.01.aod.ak <- sp::spTransform(hdf.01.aod.pt, CRS(std.crs)) #To 1985 Korea Central Belt (Transformation=Tokyo)
+  #writeOGR(obj = hdf.01.aod.ak,driver = 'ESRI Shapefile', layer = 'HDF_transf_ex', dsn = 'E:/HDF_transf_ex.shp')
+ 
+  # Snap points 
+  monitor.2010.buf <- rgeos::gBuffer(monitor.2010.sp,
+                              width = 6000, 
+                              quadsegs = 180)
+  hdf.01.aod.rr <- hdf.01.aod.ak[monitor.2010.buf, ]
+  snap <- function(x, y) {apply(spDists(x, y), 1, which.min)}
+  monitor.dk <- round(hdf.01.aod.rr[snap(monitor.2010.sp, hdf.01.aod.rr),]@data, 5)
+  cat(paste('Processed ', i, "/", length(list.h5s), '\n', sep=''))
+  
+  rm(list=ls()[grepl('^hdf.', ls())])
+  colnames(monitor.dk) <- paste('H',substr(x = list.h5s[i],
+                                 nchar(list.h5s[i])-12,
+                                 nchar(list.h5s[i])-3),sep='')
+  return(monitor.dk)
+})
+```
+
+
+```{r Quality Assessment}
+
+system.time(mi.extract.qa <- 
+foreach(i = 1:length(list.h5s),
+        .combine = cbind, 
+        .packages = c('rhdf5','sp','rgdal','gdalUtils','raster','rgeos','foreach')) %dopar% {
+
+  monitor.dk <- data.frame()
+  # Layer names are case-sensitive
+  
+  #hdf.01.lat <- h5read(paste(dir.output, list.h5s[i], sep=''), "Latitude")
+  #hdf.01.long <- h5read(paste(dir.output, list.h5s[i], sep=''), "Longitude")
+  
+  #hdf.01.cloud <- h5read(paste(dir.output, list.h5s[i], sep=''), "Cloud_fraction")
+  #hdf.01.landmask <- h5read(paste(dir.output, list.h5s[i], sep=''), "Land_Sea_Mask")
+  
+  hdf.01.lat <- h5read(paste(dir.output, list.h5s[1], sep=''), "Latitude")
+  hdf.01.lat[is.na(hdf.01.lat)] <- 0
+  hdf.01.lat.l <- c(t(hdf.01.lat))
+    
+  hdf.01.long <- h5read(paste(dir.output, list.h5s[1], sep=''), "Longitude")
+  hdf.01.long[is.na(hdf.01.long)] <- 0
+  hdf.01.long.l <- c(t(hdf.01.long))
+
+  hdf.01.aerosols <- h5read(paste(dir.output, list.h5s[i], sep=''), "AOD_550nm")
+  
+  hdf.01.aerosols.qa <- h5read(paste(dir.output, list.h5s[i], sep=''), "QA_AOD_550nm")
+  hdf.01.aerosols.qa.c <- c(t(hdf.01.aerosols.qa))
+  
+  # coerce matrix into a vector column-wise
+  hdf.01.aerosol.c <- c(t(hdf.01.aerosols))
+  hdf.01.aerosol.c <- ifelse(hdf.01.aerosols.qa.c==3, 1, NA) * hdf.01.aerosol.c
+  
+  hdf.01.dl <- matrix(c(hdf.01.lat.l, hdf.01.long.l, hdf.01.aerosol.c),
+                      ncol=3, 
+                      byrow=FALSE)
+  hdf.01.dl <- hdf.01.dl[apply(as.matrix(is.nan(hdf.01.dl[,1])),1,sum) *                      apply(as.matrix(is.nan(hdf.01.dl[,2])),1,sum) == 1,]
+  
+  #hdf.01.cloud.c <- c(t(hdf.01.cloud))
+  #hdf.01.landmask.c <- c(t(hdf.01.landmask))
+
+  # Spatial extent of Korea peninsular and its adjunct territories
+  kor.ext <- matrix(c(124,131,33,38), byrow=T, nrow=2)
+  #kor.ext.p <- 
+  
+  # To Spatial*DataFrame
+  hdf.01.aod.pt <- SpatialPointsDataFrame(
+    coords = matrix(c(hdf.01.long.l, hdf.01.lat.l), byrow=FALSE, ncol=2), 
+    data = data.frame(matrix(c(hdf.01.aerosol.c), byrow=FALSE, ncol=1)),
+    proj4string = CRS('+init=epsg:4326'))
+  colnames(hdf.01.aod.pt@data) <- c('AOD')
+  
+  hdf.01.aod.pt <- crop(hdf.01.aod.pt, kor.ext)
+  
+  # Reprojection examples
+  std.crs <- '+proj=tmerc +lat_0=38 +lon_0=127.0028902777778 +k=1 +x_0=200000 +y_0=500000 +ellps=bessel +towgs84=-146.414,507.337,680.507,0,0,0,0 +units=m +no_defs'
+
+  #hdf.01.aod.pp <- spTransform(hdf.01.aod.pt, CRS('+init=epsg:32652')) #To WGS84 UTM Zone 52N
+  #hdf.01.aod.pk <- spTransform(hdf.01.aod.pt, CRS('+init=epsg:5174')) #To 1985 Korea Modified Central Belt
+  hdf.01.aod.ak <- sp::spTransform(hdf.01.aod.pt, CRS(std.crs)) #To 1985 Korea Central Belt (Transformation=Tokyo)
+  #writeOGR(obj = hdf.01.aod.ak,driver = 'ESRI Shapefile', layer = 'HDF_transf_ex', dsn = 'E:/HDF_transf_ex.shp')
+ 
+  # Snap points 
+  monitor.2010.buf <- rgeos::gBuffer(monitor.2010.sp,
+                              width = 6200, 
+                              quadsegs = 180)
+  hdf.01.aod.rr <- hdf.01.aod.ak[monitor.2010.buf, ]
+  snap <- function(x, y) {apply(spDists(x, y), 1, which.min)}
+  monitor.dk <- round(hdf.01.aod.rr[snap(monitor.2010.sp, hdf.01.aod.rr),]@data, 5)
+  cat(paste('Processed ', i, "/", length(list.h5s), '\n', sep=''))
+  
+  rm(list=ls()[grepl('^hdf.', ls())])
+  colnames(monitor.dk) <- paste('H',substr(x = list.h5s[i],
+                                 nchar(list.h5s[i])-12,
+                                 nchar(list.h5s[i])-3),sep='')
+  return(monitor.dk)
+})
+```
+
+
+
+```{r}
+conserve2 <- mi.extract
+
+mi.extract.201301 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1301"]
+rownames(mi.extract.201301) <- 1:294
+mi.extract.201301[mi.extract.201301=="NaN"] <- NA
+
+mi.extract.201302 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1302"]
+rownames(mi.extract.201302) <- 1:294
+mi.extract.201302[mi.extract.201302=="NaN"] <- NA
+
+mi.extract.201303 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1303"]
+rownames(mi.extract.201303) <- 1:294
+mi.extract.201303[mi.extract.201303=="NaN"] <- NA
+
+mi.extract.201304 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1304"]
+rownames(mi.extract.201304) <- 1:294
+mi.extract.201304[mi.extract.201304=="NaN"] <- NA
+
+mi.extract.201305 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1305"]
+rownames(mi.extract.201305) <- 1:294
+mi.extract.201305[mi.extract.201305=="NaN"] <- NA
+
+mi.extract.201306 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1306"]
+rownames(mi.extract.201306) <- 1:294
+mi.extract.201306[mi.extract.201306=="NaN"] <- NA
+
+mi.extract.201307 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1307"]
+rownames(mi.extract.201307) <- 1:294
+mi.extract.201307[mi.extract.201307=="NaN"] <- NA
+
+mi.extract.201308 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1308"]
+rownames(mi.extract.201308) <- 1:294
+mi.extract.201308[mi.extract.201308=="NaN"] <- NA
+
+mi.extract.201309 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1309"]
+rownames(mi.extract.201309) <- 1:294
+mi.extract.201309[mi.extract.201309=="NaN"] <- NA
+
+mi.extract.201310 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1310"]
+rownames(mi.extract.201310) <- 1:294
+mi.extract.201310[mi.extract.201310=="NaN"] <- NA
+
+mi.extract.201311 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1311"]
+rownames(mi.extract.201311) <- 1:294
+mi.extract.201311[mi.extract.201311=="NaN"] <- NA
+
+mi.extract.201312 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1312"]
+rownames(mi.extract.201312) <- 1:294
+mi.extract.201312[mi.extract.201312=="NaN"] <- NA
+
+
+mi.extract.201401 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1401"]
+rownames(mi.extract.201401) <- 1:294
+mi.extract.201401[mi.extract.201401=="NaN"] <- NA
+
+mi.extract.201402 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1402"]
+rownames(mi.extract.201402) <- 1:294
+mi.extract.201402[mi.extract.201402=="NaN"] <- NA
+
+mi.extract.201403 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1403"]
+rownames(mi.extract.201403) <- 1:294
+mi.extract.201403[mi.extract.201403=="NaN"] <- NA
+
+mi.extract.201404 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1404"]
+rownames(mi.extract.201404) <- 1:294
+mi.extract.201404[mi.extract.201404=="NaN"] <- NA
+
+mi.extract.201405 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1405"]
+rownames(mi.extract.201405) <- 1:294
+mi.extract.201405[mi.extract.201405=="NaN"] <- NA
+
+mi.extract.201406 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1406"]
+rownames(mi.extract.201406) <- 1:294
+mi.extract.201406[mi.extract.201406=="NaN"] <- NA
+
+mi.extract.201407 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1407"]
+rownames(mi.extract.201407) <- 1:294
+mi.extract.201407[mi.extract.201407=="NaN"] <- NA
+
+
+mi.extract.201408 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1408"]
+rownames(mi.extract.201408) <- 1:294
+mi.extract.201408[mi.extract.201408=="NaN"] <- NA
+
+mi.extract.201409 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1409"]
+rownames(mi.extract.201409) <- 1:294
+mi.extract.201409[mi.extract.201409=="NaN"] <- NA
+
+mi.extract.201410 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1410"]
+rownames(mi.extract.201410) <- 1:294
+mi.extract.201410[mi.extract.201410=="NaN"] <- NA
+
+mi.extract.201411 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1411"]
+rownames(mi.extract.201411) <- 1:294
+mi.extract.201411[mi.extract.201411=="NaN"] <- NA
+
+mi.extract.201412 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1412"]
+rownames(mi.extract.201412) <- 1:294
+mi.extract.201412[mi.extract.201412=="NaN"] <- NA
+
+mi.extract.201501 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1501"]
+rownames(mi.extract.201501) <- 1:294
+mi.extract.201501[mi.extract.201501=="NaN"] <- NA
+
+mi.extract.201502 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1502"]
+rownames(mi.extract.201502) <- 1:294
+mi.extract.201502[mi.extract.201502=="NaN"] <- NA
+
+mi.extract.201503 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1503"]
+rownames(mi.extract.201503) <- 1:294
+mi.extract.201503[mi.extract.201503=="NaN"] <- NA
+
+mi.extract.201504 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1504"]
+rownames(mi.extract.201504) <- 1:294
+mi.extract.201504[mi.extract.201504=="NaN"] <- NA
+
+
+
+
+mi.extract.201505 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1505"]
+rownames(mi.extract.201405) <- 1:294
+mi.extract.201505[mi.extract.201505=="NaN"] <- NA
+
+mi.extract.201506 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1506"]
+rownames(mi.extract.201506) <- 1:294
+mi.extract.201506[mi.extract.201506=="NaN"] <- NA
+
+mi.extract.201507 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1507"]
+rownames(mi.extract.201507) <- 1:294
+mi.extract.201507[mi.extract.201507=="NaN"] <- NA
+
+
+mi.extract.201508 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1508"]
+rownames(mi.extract.201508) <- 1:294
+mi.extract.201508[mi.extract.201508=="NaN"] <- NA
+
+mi.extract.201509 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1509"]
+rownames(mi.extract.201509) <- 1:294
+mi.extract.201509[mi.extract.201509=="NaN"] <- NA
+
+mi.extract.201510 <- mi.extract[,substr(colnames(mi.extract), 1, 5)=="H1510"]
+rownames(mi.extract.201510) <- 1:294
+mi.extract.201510[mi.extract.201510=="NaN"] <- NA
+
+
+
+save(mi.extract.201105, mi.extract.201106, mi.extract.201107, mi.extract.201108, 
+     mi.extract.201109, mi.extract.201110, mi.extract.201111, mi.extract.201112, 
+     mi.extract.201201, mi.extract.201202, mi.extract.201203, mi.extract.201204, 
+     mi.extract.201205, mi.extract.201206, mi.extract.201207, mi.extract.201208, 
+     mi.extract.201209, mi.extract.201210, mi.extract.201211, mi.extract.201212, 
+     mi.extract.201301, mi.extract.201302, mi.extract.201303, mi.extract.201304, 
+     mi.extract.201305, mi.extract.201306, mi.extract.201307, mi.extract.201308, 
+     mi.extract.201309, mi.extract.201310, mi.extract.201311, mi.extract.201312,
+     file = "C:/Users/yangq/Dropbox/AOD/MI_extract_20161120.RData")
+
+
+save(mi.extract.201401, mi.extract.201402, mi.extract.201403, mi.extract.201404, mi.extract.201405, mi.extract.201406, mi.extract.201407,
+     file = "/home/felix/Dropbox/PM_Project/MI_extract_20140106.RData")
+
+
+save(mi.extract.201401, mi.extract.201402, mi.extract.201403, mi.extract.201404, mi.extract.201405, mi.extract.201406, mi.extract.201407, mi.extract.201408, mi.extract.201409,
+mi.extract.201410, mi.extract.201411, mi.extract.201412,
+mi.extract.201501, mi.extract.201502, mi.extract.201503, mi.extract.201504, mi.extract.201505, mi.extract.201506, mi.extract.201507, mi.extract.201508, mi.extract.201509,
+mi.extract.201510,
+     file = "/home/felix/Dropbox/PM_Project/MI_extract_201401_201510.RData")
+
+```
+
+
+
+```{r}
+goci.extract.201301 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1301"]
+rownames(goci.extract.201301) <- 1:294
+goci.extract.201301[goci.extract.201301=="NaN"] <- NA
+
+goci.extract.201302 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1302"]
+rownames(goci.extract.201302) <- 1:294
+goci.extract.201302[goci.extract.201302=="NaN"] <- NA
+
+goci.extract.201303 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1303"]
+rownames(goci.extract.201303) <- 1:294
+goci.extract.201303[goci.extract.201303=="NaN"] <- NA
+
+goci.extract.201304 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1304"]
+rownames(goci.extract.201304) <- 1:294
+goci.extract.201304[goci.extract.201304=="NaN"] <- NA
+
+goci.extract.201305 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1305"]
+rownames(goci.extract.201305) <- 1:294
+goci.extract.201305[goci.extract.201305=="NaN"] <- NA
+
+goci.extract.201306 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1306"]
+rownames(goci.extract.201306) <- 1:294
+goci.extract.201306[goci.extract.201306=="NaN"] <- NA
+
+goci.extract.201307 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1307"]
+rownames(goci.extract.201307) <- 1:294
+goci.extract.201307[goci.extract.201307=="NaN"] <- NA
+
+goci.extract.201308 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1308"]
+rownames(goci.extract.201308) <- 1:294
+goci.extract.201308[goci.extract.201308=="NaN"] <- NA
+
+goci.extract.201309 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1309"]
+rownames(goci.extract.201309) <- 1:294
+goci.extract.201309[goci.extract.201309=="NaN"] <- NA
+
+goci.extract.201310 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1310"]
+rownames(goci.extract.201310) <- 1:294
+goci.extract.201310[goci.extract.201310=="NaN"] <- NA
+
+goci.extract.201311 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1311"]
+rownames(goci.extract.201311) <- 1:294
+goci.extract.201311[goci.extract.201311=="NaN"] <- NA
+
+goci.extract.201312 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1312"]
+rownames(goci.extract.201312) <- 1:294
+goci.extract.201312[goci.extract.201312=="NaN"] <- NA
+
+
+goci.extract.201401 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1401"]
+rownames(goci.extract.201401) <- 1:294
+goci.extract.201401[goci.extract.201401=="NaN"] <- NA
+
+goci.extract.201402 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1402"]
+rownames(goci.extract.201402) <- 1:294
+goci.extract.201402[goci.extract.201402=="NaN"] <- NA
+
+goci.extract.201403 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1403"]
+rownames(goci.extract.201403) <- 1:294
+goci.extract.201403[goci.extract.201403=="NaN"] <- NA
+
+goci.extract.201404 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1404"]
+rownames(goci.extract.201404) <- 1:294
+goci.extract.201404[goci.extract.201404=="NaN"] <- NA
+
+goci.extract.201405 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1405"]
+rownames(goci.extract.201405) <- 1:294
+goci.extract.201405[goci.extract.201405=="NaN"] <- NA
+
+goci.extract.201406 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1406"]
+rownames(goci.extract.201406) <- 1:294
+goci.extract.201406[goci.extract.201406=="NaN"] <- NA
+
+goci.extract.201407 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1407"]
+rownames(goci.extract.201407) <- 1:294
+goci.extract.201407[goci.extract.201407=="NaN"] <- NA
+
+
+goci.extract.201408 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1408"]
+rownames(goci.extract.201408) <- 1:294
+goci.extract.201408[goci.extract.201408=="NaN"] <- NA
+
+goci.extract.201409 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1409"]
+rownames(goci.extract.201409) <- 1:294
+goci.extract.201409[goci.extract.201409=="NaN"] <- NA
+
+goci.extract.201410 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1410"]
+rownames(goci.extract.201410) <- 1:294
+goci.extract.201410[goci.extract.201410=="NaN"] <- NA
+
+goci.extract.201411 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1411"]
+rownames(goci.extract.201411) <- 1:294
+goci.extract.201411[goci.extract.201411=="NaN"] <- NA
+
+goci.extract.201412 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1412"]
+rownames(goci.extract.201412) <- 1:294
+goci.extract.201412[goci.extract.201412=="NaN"] <- NA
+
+goci.extract.201501 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1501"]
+rownames(goci.extract.201501) <- 1:294
+goci.extract.201501[goci.extract.201501=="NaN"] <- NA
+
+goci.extract.201502 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1502"]
+rownames(goci.extract.201502) <- 1:294
+goci.extract.201502[goci.extract.201502=="NaN"] <- NA
+
+goci.extract.201503 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1503"]
+rownames(goci.extract.201503) <- 1:294
+goci.extract.201503[goci.extract.201503=="NaN"] <- NA
+
+goci.extract.201504 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1504"]
+rownames(goci.extract.201504) <- 1:294
+goci.extract.201504[goci.extract.201504=="NaN"] <- NA
+
+
+
+
+goci.extract.201505 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1505"]
+rownames(goci.extract.201405) <- 1:294
+goci.extract.201505[goci.extract.201505=="NaN"] <- NA
+
+goci.extract.201506 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1506"]
+rownames(goci.extract.201506) <- 1:294
+goci.extract.201506[goci.extract.201506=="NaN"] <- NA
+
+goci.extract.201507 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1507"]
+rownames(goci.extract.201507) <- 1:294
+goci.extract.201507[goci.extract.201507=="NaN"] <- NA
+
+goci.extract.201508 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1508"]
+rownames(goci.extract.201508) <- 1:294
+goci.extract.201508[goci.extract.201508=="NaN"] <- NA
+
+goci.extract.201509 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1509"]
+rownames(goci.extract.201509) <- 1:294
+goci.extract.201509[goci.extract.201509=="NaN"] <- NA
+
+goci.extract.201510 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1510"]
+rownames(goci.extract.201510) <- 1:294
+goci.extract.201510[goci.extract.201510=="NaN"] <- NA
+
+goci.extract.201511 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1511"]
+rownames(goci.extract.201511) <- 1:294
+goci.extract.201511[goci.extract.201511=="NaN"] <- NA
+
+
+goci.extract.201512 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1512"]
+rownames(goci.extract.201512) <- 1:294
+goci.extract.201512[goci.extract.201512=="NaN"] <- NA
+
+
+
+goci.extract.201601 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1601"]
+rownames(goci.extract.201601) <- 1:294
+goci.extract.201601[goci.extract.201601=="NaN"] <- NA
+
+goci.extract.201602 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1602"]
+rownames(goci.extract.201602) <- 1:294
+goci.extract.201602[goci.extract.201602=="NaN"] <- NA
+
+goci.extract.201603 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1603"]
+rownames(goci.extract.201603) <- 1:294
+goci.extract.201603[goci.extract.201603=="NaN"] <- NA
+
+goci.extract.201604 <- goci.extract[,substr(colnames(goci.extract), 1, 5)=="H1604"]
+rownames(goci.extract.201604) <- 1:294
+goci.extract.201604[goci.extract.201604=="NaN"] <- NA
+
+
+```
+
+
+
+```{r}
+nms <- c('Longitude', 'Latitude', 'AOD_550nm') %>% 
+  split(.,.) %>% 
+  lapply(function(x) h5read('C:/Users/sigma/Dropbox/PM_Project/Imagery_Processing/GOCI_YAER_AOP_20110621071640.h5', x))
+library(oce)
+imagep(x = nms$Longitude, y = nms$Latitude, z = nms$AOD_550nm)
+
+nms.df <- data.frame(x =nms$Longitude %>% c, y =nms$Latitude %>% c, aod =nms$AOD_550nm %>% c) %>% 
+  filter(!is.na(aod)) 
+nms.sf <- nms.df %>% st_as_sf(dim = 'XY', coords = c('x', 'y'))
+
+st_crs(nms.sf) <- '+proj=ortho +lon_0=130 +lat_0=36'
+
+
+imagep(x = nms.df$x, y = nms.df$y, z = as.matrix(nms.df$aod))
+image(x = nms.df$x, y = nms.df$y, z = nms.df$aod)
+image.plot(x = nms.df$x, y = nms.df$y, z = nms.df$aod)
+
+plot(x = nms.df$x, y = nms.df$y, color = nms.df$aod)
+
+nms <- c('Longitude', 'Latitude', 'AOD_550nm') %>% 
+  split(.,.) %>% 
+  lapply(function(x) h5file('C:/Users/sigma/Dropbox/PM_Project/Imagery_Processing/GOCI_YAER_AOP_20110622031643.h5') %>% h5attr(x))
+
+
+sgg.sim <- sgg %>% st_simplify(dTolerance = 250, preserveTopology = TRUE)
+sgg.wgs <- sgg.sim %>% st_transform(4326)
+plot(st_geometry(sgg.wgs))
+plot(nms.sf, add = TRUE)
+plot(st_geometry(sgg.wgs), col = 'transparent', border = 'light green', add = TRUE)
+
+plot(nms.sf, pch = 19, cex = 0.5, alpha = 0.5)
+```
+
+
+
+
+```{r}
+
+sinus = CRS("+proj=sinu +lon_0=0 +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs")
+monitor.2010 <- read.csv('C:/Users/sigma/Dropbox/PM_Project/Monitors/2010_MonitoringSites.csv',
+                          encoding = 'cp949')
+monitor.2010.sp <- monitor.2010[,1:3] %>% SpatialPointsDataFrame(coords = .[,2:3], data = .)
+proj4string(monitor.2010.sp) <- '+init=epsg:4326'
+monitor.2010.sp <- monitor.2010.sp %>%
+  spTransform(., CRS('+init=epsg:5179'))
+
+
+list.h5s <- list.files(path = 'E:/MODIS_AOD/MOD_3K/2001_2002_MOD04_3K/', pattern = '*.h5$', full.names = T)
+
+
+system.time(mod043k.0102 <- 
+foreach(i = 1:length(list.h5s),
+        .combine = cbind, 
+        .export = c('monitor.2010.sp'),
+        .packages = c('rhdf5','sp','rgdal','gdalUtils','raster','rgeos','foreach')) %dopar% {
+
+  monitor.dk <- data.frame()
+  # Layer names are case-sensitive
+  
+  #hdf.01.lat <- h5read(paste(dir.output, list.h5s[i], sep=''), "Latitude")
+  #hdf.01.long <- h5read(paste(dir.output, list.h5s[i], sep=''), "Longitude")
+  
+  #hdf.01.cloud <- h5read(paste(dir.output, list.h5s[i], sep=''), "Cloud_fraction")
+  #hdf.01.landmask <- h5read(paste(dir.output, list.h5s[i], sep=''), "Land_Sea_Mask")
+  
+  hdf.01.lat <- h5read(paste(list.h5s[i], sep=''), name = "/mod04/Geolocation Fields/Latitude")
+  hdf.01.lat[is.na(hdf.01.lat)] <- 0
+  hdf.01.lat.l <- c(t(hdf.01.lat))
+    
+  hdf.01.long <- h5read(paste(list.h5s[i], sep=''), "/mod04/Geolocation Fields/Longitude")
+  hdf.01.long[is.na(hdf.01.long)] <- 0
+  hdf.01.long.l <- c(t(hdf.01.long))
+
+  hdf.01.aerosols <- h5read(paste(list.h5s[i], sep=''), "/mod04/Data Fields/Optical_Depth_Land_And_Ocean")
+  #hdf.01.aerosols.qa <- h5read(paste(dir.output, list.h5s[i], sep=''), "QA_AOD_550nm")
+  
+  # coerce matrix into a vector column-wise
+  hdf.01.aerosol.c <- c(t(hdf.01.aerosols))
+  
+  hdf.01.dl <- matrix(c(hdf.01.lat.l, hdf.01.long.l, hdf.01.aerosol.c),
+                      ncol=3, 
+                      byrow=FALSE)
+  hdf.01.dl <- hdf.01.dl[apply(as.matrix(is.nan(hdf.01.dl[,1])),1,sum) *                      apply(as.matrix(is.nan(hdf.01.dl[,2])),1,sum) == 1,]
+  
+  #hdf.01.cloud.c <- c(t(hdf.01.cloud))
+  #hdf.01.landmask.c <- c(t(hdf.01.landmask))
+
+  # Spatial extent of Korea peninsular and its adjunct territories
+  kor.ext <- matrix(c(122,134,30,40), byrow=T, nrow=2)
+  #kor.ext.p <- 
+  
+  # To Spatial*DataFrame
+  hdf.01.aod.pt <- SpatialPointsDataFrame(
+    coords = matrix(c(hdf.01.long.l, hdf.01.lat.l), byrow=FALSE, ncol=2), 
+    data = data.frame(matrix(c(hdf.01.aerosol.c), byrow=FALSE, ncol=1)),
+    proj4string = CRS('+init=epsg:4326'))
+  colnames(hdf.01.aod.pt@data) <- c('AOD')
+  
+  hdf.01.aod.pt <- crop(hdf.01.aod.pt, kor.ext)
+  
+  #hdf.01.aod.sf <- st_as_sf(hdf.01.aod.pt)
+  
+  # Reprojection examples
+  #std.crs <- '+proj=tmerc +lat_0=38 +lon_0=127.0028902777778 +k=1 +x_0=200000 +y_0=500000 +ellps=bessel +towgs84=-146.414,507.337,680.507,0,0,0,0 +units=m +no_defs'
+  std.crs <- '+init=epsg:5179'
+  #hdf.01.aod.pp <- spTransform(hdf.01.aod.pt, CRS('+init=epsg:32652')) #To WGS84 UTM Zone 52N
+  #hdf.01.aod.pk <- spTransform(hdf.01.aod.pt, CRS('+init=epsg:5174')) #To 1985 Korea Modified Central Belt
+  hdf.01.aod.ak <- sp::spTransform(hdf.01.aod.pt, std.crs) #To 1985 Korea Central Belt (Transformation=Tokyo)
+  #writeOGR(obj = hdf.01.aod.ak,driver = 'ESRI Shapefile', layer = 'HDF_transf_ex', dsn = 'E:/HDF_transf_ex.shp')
+ 
+  # Snap points 
+  monitor.2010.buf <- rgeos::gBuffer(monitor.2010.sp,
+                              width = 20000, 
+                              quadsegs = 180)
+  hdf.01.aod.rr <- hdf.01.aod.ak[monitor.2010.buf, ]
+  snap <- function(x, y) {apply(spDists(x, y), 1, which.min)}
+  monitor.dk <- round(hdf.01.aod.rr[snap(monitor.2010.sp, hdf.01.aod.rr),]@data, 5)
+  if (nrow(monitor.dk) == 0){ monitor.dk <- data.frame(rep(NA, length(monitor.2010.sp)))}
+  monitor.dk[,1] <- ifelse(monitor.dk[,1] < -1000, NA, monitor.dk[,1])
+  cat(paste('Processed ', i, "/", length(list.h5s), '\n', sep=''))
+  
+  rm(list=ls()[grepl('^hdf.', ls())])
+  colnames(monitor.dk) <- paste('E', 
+                                substr(x = list.h5s[i],
+                                 20,
+                                 31),sep='')
+  return(monitor.dk)
+})
+
+
+image(as.matrix(mod043k.0102))
+```
+
