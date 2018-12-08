@@ -1,0 +1,109 @@
+---
+title: "STKriging-rgl"
+author: "Insang Song"
+date: "May 30, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, fig.width = 12, fig.height = 10)
+library(rgl)
+library(rglwidget)
+library(htmltools)
+library(sf)
+library(classInt)
+library(tidyverse)
+
+dos <- st_read('C:/Users/sigma/Dropbox/R_Dissertation/SIDO_Seoul.shp')
+dos <- st_transform(dos, crs = 5186)
+dos <- subset(dos, SIDO_CD==11)
+si.df <- broom::tidy(as(dos %>% st_simplify(preserveTopology = TRUE, dTolerance = 10), 'Spatial'))
+```
+
+
+
+```{r}
+stcube.impute <- function(stf_o=NULL, stf_i, ncols=5, colcont=FALSE, zaspect=1.5,
+                          xcol='coords.x1', ycol='coords.x2', tcol='timeIndex', zcol='PM10', ccol='col', 
+                          acol='alpha', extrude.factor=2e3, legend=FALSE, toimage=FALSE, filename='13'){
+  library(spacetime)
+  library(classInt)
+  library(lubridate)
+  # stf_i: imputed data STFDF
+  # Assumes that si.df already exists
+  # Missing
+  
+  # timemissing
+  timevec <- stf_i@time
+  timevecs <- timevec %>% as.POSIXct
+  timevecindex <- (lubridate::hour(timevecs) %% 6 == 0)#paste(lubridate::year(timevec),sprintf('%02d',lubridate::month(timevec)),
+                  # sprintf('%02d', lubridate::day(timevec)), sprintf('%02d',lubridate::hour(timevec)), sep = '')
+  # timevec subsetting: by 6
+  timevecd <- 1:length(timevecs)
+  timevece <- timevecd[timevecindex]
+  #@print(timevecd)
+  
+  to.mdf <- stf_i %>% data.frame
+  to.cl <- classIntervals(to.mdf[,zcol], ncols, style='jenks')
+  #to.cl$brks
+  colfunc <- colorRampPalette(c("white", "dark red"))
+  to.mdf$alpha <- ifelse(is.na(to.mdf[,zcol]), 0.075, 0.7)
+  colfunc2 <- colorRampPalette(c("dark blue", "white", "dark red"))
+  if (colcont){
+    range.zcol <- range(to.mdf[,zcol], na.rm=TRUE)
+    seqbrks <- seq(range.zcol[1],range.zcol[2],2.5)
+    
+    if (seqbrks[length(seqbrks)] != max(to.mdf[,zcol], na.rm=TRUE)) seqbrks <-c(seqbrks, seqbrks[length(seqbrks)]+2.4999)
+    to.mdf$col <- as.character(cut(to.mdf[,zcol], 
+                                   breaks =seqbrks, 
+                                   labels=colfunc(length(seqbrks)-1)))
+    to.mdf$alpha <- ifelse(is.na(to.mdf$col), 0.8, to.mdf$alpha)
+    to.mdf$col <- ifelse(is.na(to.mdf$col), 'black', to.mdf$col)
+  }
+  else {
+    to.mdf$col <- as.character(cut(to.mdf[,zcol], breaks =to.cl$brks, 
+                                   labels=colfunc2(length(to.cl$brks)-1)))
+    
+  }
+  
+  to.mdf2 <- to.mdf %>% filter(!is.na(PM10))
+  #rgl.open()
+  shapelist3d(cube3d(),
+              size= 0.45 * extrude.factor, 
+              col=to.mdf[,ccol], alpha=to.mdf[,acol],
+              x=to.mdf[,xcol], y=to.mdf[,ycol], 
+              z=to.mdf[,tcol] * extrude.factor,
+              xlab='', ylab='', zlab='', phi=15, alpha=0.5
+  ) 
+  #color=to1.mdf$col, alpha=0.8)
+  bbox3d(zat = NULL)
+  axis3d('z-', at = timevece * extrude.factor, labels = timevecs[timevece])
+  #rgl_add_axes(x, y, z, show.bbox = TRUE)
+  lines3d(si.df$long, si.df$lat, rep(0, nrow(si.df)), lwd=3)
+  aspect3d(1,1,zaspect)
+  
+  theta <- timevecd * extrude.factor
+  assign('theta', value = theta, envir = .GlobalEnv)
+  
+  if (toimage) {
+    #rgl.snapshot(filename = paste('C:/Users/sigma/Documents/STCube_', filename, '.png', sep = ''), fmt = 'png')
+    rgl.postscript(filename = paste('C:/Users/sigma/Documents/STCube_', filename, '.svg', sep = ''), fmt = 'svg', drawText = T)
+  }
+  
+}
+
+#stcube.impute(stf_i=toset.r.10.l[[1]]$l_complete$`124`, extrude.factor=2000, toimage=T)
+#theta <- seq(1, 6*pi, len=1)
+#xyz <- cbind(sin(theta), cos(theta), theta)
+stcube.impute(stf_i=toset.r.10.l[[1]]$l_complete$`823`, extrude.factor=2000, colcont = TRUE, toimage=F, zaspect=1.5)
+rglwidget(elementId = "stcube1", width = 1280, height = 800)# %>% 
+#subsetControl(1, subsets = list(
+#                 1=1,2=2,3=3,4=4,5=5,6=6,7=7,8=8,9=9,10=10,
+#                 11=11,12=12,13=13,14=14,15=15,16=16,17=17,18=18,19=19,20=20,
+#                 21=21,22=22,23=23,24=24,25=25,26=26,
+#                 All = c(1:26)))
+
+```
+
+
+
