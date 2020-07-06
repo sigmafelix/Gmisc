@@ -1,0 +1,76 @@
+---
+title: 'Geofacets: examples in Korea'
+author: "Insang Song"
+date: "7/6/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Seoul
+```{r}
+library(pacman)
+p_load(tidyverse, geofacet)
+
+seoul_pop <- read_tsv('Seoul_Pop_Register.txt',
+                      locale = locale(encoding = 'UTF-8'))
+```
+
+```{r}
+
+seoul_grid_v1 <-
+  data.frame(
+    name = c('Dobong',' Gangbuk', 'Nowon', 'Eunpyeong', 'Jongno', 'Seongbuk', 'Jungnang', 
+             'Mapo', 'Seodaemun', 'Jung', 'Seongdong', 'Dongdaemun', 'Gwangjin', 'Gangseo', 'Yangcheon',
+             'Yeongdeungpo', 'Dongjak', 'Yongsan', 'Gangnam', 'Songpa', 'Gangdong', 'Guro',' Geumcheon',
+             'Gwanak', 'Seocho'),
+    name_kr = c('도봉구', '강북구', '노원구', '은평구', '종로구' ,'성북구', '중랑구', '마포구', '서대문구',
+                '중구','성동구', '동대문구', '광진구', '강서구', '양천구', '영등포구', '동작구', '용산구',
+                '강남구', '송파구', '강동구', '구로구', '금천구', '관악구', '서초구'),
+    row = c(1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6),
+    col = c(6, 5, 6, 3, 4, 5, 6, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7, 8, 2, 3, 4, 6),
+    code = c('DB', 'GB', 'NW', 'EP', 'JR', 'SB' ,'JN', 'MP', 'SM', 'JG', 'SD', 'DM', 'GJ',
+             'GS', 'YC', 'YD', 'DJ', 'YS', 'GN', 'SP', 'GD', 'GR', 'GC', 'GA', 'SC'),
+    # TODO: add codes
+    code_sgis = c(rep(0,25)),
+    code_adm = c(rep(0,25))
+  )
+
+
+seoul_grid_v2 <-
+  data.frame(
+    name = c('Dobong',' Gangbuk', 'Nowon', 'Eunpyeong', 'Jongno', 'Seongbuk', 'Jungnang', 
+             'Mapo', 'Seodaemun', 'Jung', 'Seongdong', 'Dongdaemun', 'Gwangjin', 'Gangseo', 'Yangcheon',
+             'Yeongdeungpo', 'Dongjak', 'Yongsan', 'Gangnam', 'Songpa', 'Gangdong', 'Guro',' Geumcheon',
+             'Gwanak', 'Seocho'),
+    name_kr = c('도봉구', '강북구', '노원구', '은평구', '종로구' ,'성북구', '중랑구', '마포구', '서대문구',
+                '중구','성동구', '동대문구', '광진구', '강서구', '양천구', '영등포구', '동작구', '용산구',
+                '강남구', '송파구', '강동구', '구로구', '금천구', '관악구', '서초구'),
+    row = c(1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5),
+    col = c(5, 4, 6, 3, 4, 5, 6, 2, 3, 4, 6, 5, 7, 1, 2, 3, 4, 5, 6, 7, 8, 2, 3, 4, 6),
+    code = c('DB', 'GB', 'NW', 'EP', 'JR', 'SB' ,'JN', 'MP', 'SM', 'JG', 'SD', 'DM', 'GJ',
+             'GS', 'YC', 'YD', 'DJ', 'YS', 'GN', 'SP', 'GD', 'GR', 'GC', 'GA', 'SC'),
+    # TODO: add codes
+    code_sgis = c(rep(0,25)),
+    code_adm = c(rep(0,25))
+  )
+
+
+seoul_pop_f <- seoul_pop %>% 
+  filter(Gu != '합계') %>% 
+  rename(name_kr = Gu)
+
+ggplot(seoul_pop_f,
+       mapping = aes(Year, pop_t)) +
+  geom_line() +
+  facet_geo(~ name_kr, grid = seoul_grid_v2, label = "name") +
+  scale_x_continuous(labels = function(x) paste0("'", substr(x, 3, 4))) +
+  labs(title = "Seoul population example: Geofacet",
+    caption = "Data Source: data.seoul.go.kr",
+    x = "Year",
+    y = paste('Persons')) +
+  theme(strip.text.x = element_text(size = 10))
+```
+
